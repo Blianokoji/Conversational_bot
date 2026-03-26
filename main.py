@@ -1,6 +1,7 @@
 import sys
 import time
 import logging
+import re
 
 from audio.stt import BufferedSTT
 from audio.tts import TTSHandler
@@ -18,11 +19,11 @@ def run_agent():
 
     try:
         # Initialize components
-        print("[1/5] Initializing STT (Whisper buffered chunks)...")
-        # Use 2-second chunks for more stable speech capture.
-        stt = BufferedSTT(model_size="base", energy_threshold=0.005, chunk_duration=2.0)
+        print("[1/5] Initializing STT (Whisper small model + confidence gating)...")
+        # Use small Whisper model for better accuracy; 2-second chunks for stable capture.
+        stt = BufferedSTT(model_size="small", energy_threshold=0.005, chunk_duration=2.0)
         
-        print("[2/5] Initializing TTS (gTTS + Pygame)...")
+        print("[2/5] Initializing TTS (provider + fallback)...")
         tts = TTSHandler()
         
         print("[3/5] Initializing Knowledge Base Retriever (FAISS)...")
@@ -49,9 +50,20 @@ def run_agent():
             if not user_text:
                 continue
                 
-            # Exit condition
+            # Exit condition based on spoken text and translated English query.
             low_text = user_text.lower().strip(" .!,")
-            if low_text in ["goodbye", "quit", "exit", "stop", "bye"]:
+            low_text_en = (user_text_en or "").lower().strip(" .!,")
+            combined = f" {low_text} {low_text_en} "
+            quit_patterns = [
+                r"\bgood\s*bye\b",
+                r"\bbye\b",
+                r"\bquit\b",
+                r"\bexit\b",
+                r"\bstop\b",
+                r"\bശരി\s*വിട\b",      # Malayalam approximate goodbye intent
+                r"\bअलविदा\b",          # Hindi goodbye
+            ]
+            if any(re.search(pattern, combined) for pattern in quit_patterns):
                 print("👋 Shutting down...")
                 tts.speak("Goodbye! Have a great day.", lang="en")
                 break

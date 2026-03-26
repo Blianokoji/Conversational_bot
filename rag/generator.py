@@ -67,6 +67,10 @@ class Generator:
             ]
         )
 
+    def _is_greeting_query(self, user_query: str) -> bool:
+        q = user_query.lower().strip()
+        return bool(re.search(r"\b(hello|hi|hey|good\s*morning|good\s*evening|namaste|namaskaram)\b", q))
+
     def _local_context_fallback(self, user_query: str) -> str:
         """Generate a concise fallback answer directly from retrieved chunks."""
         try:
@@ -96,6 +100,13 @@ class Generator:
         user_query = self._normalize_query(user_query)
         response_language = response_language if response_language in self.language_names else "en"
         response_language_name = self.language_names[response_language]
+
+        if self._is_greeting_query(user_query):
+            bot_text = "Hello. I am the Transight AI Assistant. How can I help you today?"
+            if response_language != "en":
+                bot_text = self._translate_with_model(bot_text, response_language_name)
+            self.memory.add_interaction(user_query, bot_text)
+            return bot_text
 
         # Handle common identity/company intro queries deterministically.
         if self._is_identity_query(user_query):

@@ -10,7 +10,9 @@ warnings.filterwarnings(
 )
 
 import pygame
-from gtts import gTTS
+
+from audio.gtts_tts import GTTSProvider
+from audio.elevenlabs_tts import ElevenLabsProvider
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
@@ -19,6 +21,34 @@ class TTSHandler:
         # Initialize the Pygame audio mixer
         pygame.mixer.init()
         self.supported_langs = {"en", "hi", "ml"}
+        self.provider = os.getenv("TTS_PROVIDER", "gtts").strip().lower()
+
+        self.gtts = GTTSProvider()
+        self.elevenlabs = ElevenLabsProvider()
+
+        if self.provider not in {"gtts", "elevenlabs"}:
+            logging.warning(f"Unknown TTS_PROVIDER '{self.provider}', defaulting to gtts.")
+            self.provider = "gtts"
+
+        if self.provider == "elevenlabs" and not self.elevenlabs.is_available:
+            logging.warning("ElevenLabs is selected but not fully configured. Falling back to gTTS.")
+            self.provider = "gtts"
+
+    def _play_file(self, filename: str):
+        logging.info("Playing response audio...")
+        pygame.mixer.music.load(filename)
+        pygame.mixer.music.play()
+
+        while pygame.mixer.music.get_busy():
+            pygame.time.Clock().tick(10)
+
+    def _synthesize_with_provider(self, text: str, lang: str) -> str:
+        if self.provider == "elevenlabs":
+            logging.info(f"Generating voice response with ElevenLabs (Language: {lang})...")
+            return self.elevenlabs.synthesize_to_file(text, lang)
+
+        logging.info(f"Generating voice response with gTTS (Language: {lang})...")
+        return self.gtts.synthesize_to_file(text, lang)
 
     def speak(self, text: str, lang: str = 'en'):
         """
@@ -31,30 +61,35 @@ class TTSHandler:
         if lang not in self.supported_langs:
             logging.warning(f"Unsupported TTS language '{lang}', falling back to English.")
             lang = "en"
-            
-        filename = f"dynamic_resp_{int(time.time())}.mp3"
+
+        filename = None
         try:
-            logging.info(f"Generating voice response (Language: {lang})...")
-            # Create gTTS object with dynamically passed language
-            tts = gTTS(text=text, lang=lang)
-            tts.save(filename)
-            
-            logging.info("Playing response audio...")
-            pygame.mixer.music.load(filename)
-            pygame.mixer.music.play()
-            
-            # Wait until playback completes seamlessly
-            while pygame.mixer.music.get_busy():
-                pygame.time.Clock().tick(10)
-                
+            filename = self._synthesize_with_provider(text, lang)
+            self._play_file(filename)
+
         except Exception as e:
-            logging.error(f"TTS Engine Error: {e}")
+            logging.error(f"Primary TTS provider failed: {e}")
+
+            # Automatic fallback path to gTTS if ElevenLabs fails at runtime.
+            if self.provider == "elevenlabs":
+                try:
+                    logging.info("Falling back to gTTS...")
+                    filename = self.gtts.synthesize_to_file(text, lang)
+                    self._play_file(filename)
+                    return
+                except Exception as fallback_error:
+                    logging.error(f"Fallback gTTS failed: {fallback_error}")
         finally:
             # Unload music so the file is freed and can be deleted on Windows
-            pygame.mixer.music.unload()
+            if pygame.mixer.get_init():
+                try:
+                    pygame.mixer.music.unload()
+                except Exception:
+                    pass
+
             # Give audio device extra time to reset after output playback
-            time.sleep(0.5) # Increased from 0.1 to allow full device reset
-            if os.path.exists(filename):
+            time.sleep(0.5)
+            if filename and os.path.exists(filename):
                 os.remove(filename)
 
 if __name__ == "__main__":
